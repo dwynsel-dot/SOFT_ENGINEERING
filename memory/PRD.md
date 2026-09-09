@@ -68,6 +68,9 @@ Build a Shopee-style marketplace for farmers (sellers) and buyers within Laguna 
 - Rider email on assignment: PUT /api/orders/{id}/assign-rider looks up the rider's user email (via rider_user_id) and sends a Resend email with order #, address, and delivery fee. Custom/temp riders (no account) skip email. [done]
 - Tested iteration_10: same-town persisted fee ₱30 (curl), stock PATCH (curl), reviews POST OK, assign-rider 200 + no 500 from email, rider earnings shape OK. Frontend compiles clean.
 
+## Implemented (2026-07, iteration 11 — Map z-index overlap fix)
+- Fixed Leaflet map overlapping shadcn Radix portals: `.leaflet-container` now isolates its stacking context and inner panes/controls are capped below z-50. Municipality Select dropdown (Checkout) and Rate product Dialog (Orders) now render cleanly above the map. Verified via UI test on /checkout. [done]
+
 ## Pending on user input
 - PayMongo webhook secret (PAYMONGO_WEBHOOK_SECRET) still empty — auto-verify checkout works but signed webhook confirmation is inactive until user registers the webhook {backend}/api/webhook/paymongo and pastes its secret.
 

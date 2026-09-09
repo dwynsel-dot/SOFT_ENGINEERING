@@ -65,3 +65,21 @@ body {
 }
 
 .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Fix: Leaflet map panes/controls have z-index up to 1000 and were overlapping
+   shadcn/ui Radix portals (Select dropdown on Checkout municipality, Dialog on
+   Orders rating). Isolate the map's stacking context so inner z-indexes stay
+   contained, and cap control layers below Radix portals (z-50). */
+.leaflet-container {
+    isolation: isolate;
+    z-index: 0;
+    position: relative;
+}
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom {
+    z-index: 1 !important;
+}
+.leaflet-control {
+    z-index: 2 !important;
+}
