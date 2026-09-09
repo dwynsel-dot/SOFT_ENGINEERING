@@ -102,47 +102,74 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Z-index fix verification for Leaflet map overlapping Radix UI portals (Select dropdown on Checkout municipality field and Dialog on Orders rating)"
+user_problem_statement: "CORS login bug fix verification - Login was returning 'Something went wrong. Please try again.' toast for all accounts due to CORS preflight mismatch. Fix applied: changed allow_credentials=True to allow_credentials=False in backend CORS middleware."
 
-frontend:
-  - task: "Z-index fix for municipality dropdown on Checkout page"
+backend:
+  - task: "CORS middleware fix for login authentication"
     implemented: true
     working: true
-    file: "/app/frontend/src/index.css"
+    file: "/app/backend/server.py"
     stuck_count: 0
-    priority: "high"
+    priority: "critical"
     needs_retesting: false
     status_history:
         - working: true
           agent: "testing"
-          comment: "PASSED - Municipality dropdown is fully visible and functional. The dropdown renders correctly above the Leaflet map. All municipality options (Calamba, Los Baños, Santa Cruz, San Pablo, etc.) are visible and clickable. The z-index fix (.leaflet-container with isolation: isolate and z-index: 0, .leaflet-pane/.leaflet-top/.leaflet-bottom capped at z-index: 1, .leaflet-control capped at z-index: 2) successfully prevents the map from overlapping the Radix Select dropdown (z-50)."
-  
-  - task: "Z-index fix for Rate Product Dialog on Orders page"
+          comment: "PASSED - CORS fix verified. Changed allow_credentials=False in CORSMiddleware (line 899). All three login flows working: Buyer (aling.nena@laguna.ph → /market), Seller (mang.kanor@laguna.ph → /seller), Admin (admin@test.com → /orders). POST /api/auth/login returns 200, no CORS errors in console, no error toasts. Bearer token authentication from localStorage working correctly."
+
+frontend:
+  - task: "Buyer login flow"
     implemented: true
-    working: "NA"
-    file: "/app/frontend/src/index.css"
+    working: true
+    file: "/app/frontend/src/pages/Login.js"
     stuck_count: 0
-    priority: "high"
+    priority: "critical"
     needs_retesting: false
     status_history:
-        - working: "NA"
+        - working: true
           agent: "testing"
-          comment: "SKIPPED - Cannot test because buyer account (aling.nena@laguna.ph) has no delivered/picked_up orders. The Rate Product button only appears for completed orders. However, since Scenario 1 passed and both scenarios use the same z-index fix (Radix portals at z-50 vs Leaflet map capped at z-2), the fix should work for the Dialog as well."
+          comment: "PASSED - Buyer login (aling.nena@laguna.ph / buyer123) successfully redirects to /market. No error toast. Welcome message displayed. Screenshot: buyer_login_success.png"
+  
+  - task: "Seller login flow"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/pages/Login.js"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "PASSED - Seller login (mang.kanor@laguna.ph / farmer123) successfully redirects to /seller. Seller dashboard loads correctly with welcome toast. Screenshot: seller_login_success.png"
+  
+  - task: "Admin login flow"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/pages/Login.js"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "PASSED - Admin login (admin@test.com / admin123) successfully redirects to /orders. Admin orders page loads correctly with welcome toast. Screenshot: admin_login_success.png"
 
 metadata:
   created_by: "testing_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "1.1"
+  test_sequence: 2
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Z-index fix for municipality dropdown on Checkout page"
-    - "Z-index fix for Rate Product Dialog on Orders page"
+    - "CORS middleware fix for login authentication"
+    - "Buyer login flow"
+    - "Seller login flow"
+    - "Admin login flow"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "testing"
-      message: "Z-index fix verification completed. Scenario 1 (Municipality dropdown) PASSED - dropdown is fully visible above the map. Scenario 2 (Rate Product Dialog) SKIPPED due to no delivered orders in test account. The CSS fix in /app/frontend/src/index.css is working correctly: .leaflet-container has isolation: isolate + z-index: 0, and all Leaflet panes/controls are capped at z-index: 1-2, which is well below Radix portals (z-50). No further action needed for this fix."
+      message: "CRITICAL BUG FIX VERIFIED ✅ - Login CORS issue is RESOLVED. All three login flows (buyer, seller, admin) are working perfectly. The fix (allow_credentials=False) resolves the CORS preflight mismatch that was blocking login requests. Network analysis confirms POST /api/auth/login returns 200 with no CORS errors. Bearer token authentication from localStorage is functioning correctly. No further action needed - bug fix is complete and verified."

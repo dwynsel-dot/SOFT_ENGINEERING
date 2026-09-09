@@ -68,6 +68,9 @@ Build a Shopee-style marketplace for farmers (sellers) and buyers within Laguna 
 - Rider email on assignment: PUT /api/orders/{id}/assign-rider looks up the rider's user email (via rider_user_id) and sends a Resend email with order #, address, and delivery fee. Custom/temp riders (no account) skip email. [done]
 - Tested iteration_10: same-town persisted fee ₱30 (curl), stock PATCH (curl), reviews POST OK, assign-rider 200 + no 500 from email, rider earnings shape OK. Frontend compiles clean.
 
+## Implemented (2026-07, iteration 12 — Login CORS fix)
+- Fixed "Something went wrong. Please try again." toast on login. Root cause: ingress rewrites the `Origin` header for the preview domain, so FastAPI's CORS middleware (with `allow_credentials=True`) echoed back the rewritten origin, failing the browser's preflight check. Fix: set `allow_credentials=False` in the CORS config in `/app/backend/server.py`. Preflight now returns `Access-Control-Allow-Origin: *`. Auth uses localStorage Bearer tokens (no cookies), so no functional loss. All 3 login flows (buyer/seller/admin) verified. [done]
+
 ## Implemented (2026-07, iteration 11 — Map z-index overlap fix)
 - Fixed Leaflet map overlapping shadcn Radix portals: `.leaflet-container` now isolates its stacking context and inner panes/controls are capped below z-50. Municipality Select dropdown (Checkout) and Rate product Dialog (Orders) now render cleanly above the map. Verified via UI test on /checkout. [done]
 
