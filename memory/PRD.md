@@ -68,6 +68,13 @@ Build a Shopee-style marketplace for farmers (sellers) and buyers within Laguna 
 - Rider email on assignment: PUT /api/orders/{id}/assign-rider looks up the rider's user email (via rider_user_id) and sends a Resend email with order #, address, and delivery fee. Custom/temp riders (no account) skip email. [done]
 - Tested iteration_10: same-town persisted fee ₱30 (curl), stock PATCH (curl), reviews POST OK, assign-rider 200 + no 500 from email, rider earnings shape OK. Frontend compiles clean.
 
+## Implemented (2026-07, iteration 13 — PayMongo online payment + Refund flow)
+- Online payment now routes through **PayMongo Hosted Checkout** (card + GCash + Maya) using the user's `sk_test_RH3PZ8j53Cye2Fz58Dmnbkf7` key on `/v1/checkout_sessions`. Stripe is preserved as fallback if PayMongo key is unset. Order stores `payment_provider="paymongo"` + `paymongo_session_id`. [done]
+- Added `GET /api/paymongo/status/{order_id}` polling endpoint used by `PaymentResult` after redirect back from PayMongo. Extracts `paymongo_payment_id` from the session's paid `payments[]` and stores it. [done]
+- `PUT /api/orders/{id}/cancel` now allows paid online/GCash orders and issues a PayMongo refund via `POST /v1/refunds` (auto-retrieves `paymongo_payment_id` from the session if not yet stored). On success sets `payment_status="refunded"`, `refund_id`, `refund_provider`. Blocks cancel when `status="out_for_delivery"`. Refund failures return **HTTP 409** (not 502) because Cloudflare intercepts every 5xx and replaces the body with a generic HTML error page. Same 502→400 downgrade applied to checkout gateway failures. [done]
+- Orders page: cancel is now a confirmation Dialog with paid-vs-unpaid copy ("refund back to your original method · 3–7 business days" vs "restore the seller's stock"). Refunded orders show a persistent inline note. [done]
+- Verified: backend 8/8 tests pass; frontend 3/3 scenarios pass (online redirect to checkout.paymongo.com, paid-order refund dialog + toast, unpaid COD cancel dialog + stock restore).
+
 ## Implemented (2026-07, iteration 12 — Login CORS fix)
 - Fixed "Something went wrong. Please try again." toast on login. Root cause: ingress rewrites the `Origin` header for the preview domain, so FastAPI's CORS middleware (with `allow_credentials=True`) echoed back the rewritten origin, failing the browser's preflight check. Fix: set `allow_credentials=False` in the CORS config in `/app/backend/server.py`. Preflight now returns `Access-Control-Allow-Origin: *`. Auth uses localStorage Bearer tokens (no cookies), so no functional loss. All 3 login flows (buyer/seller/admin) verified. [done]
 

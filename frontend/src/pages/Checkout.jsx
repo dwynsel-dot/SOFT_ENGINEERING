@@ -143,7 +143,7 @@ export default function Checkout() {
           <div className="bg-card border border-border rounded-2xl p-6">
             <h2 className="font-heading font-bold text-lg">Payment method</h2>
             <div className="grid sm:grid-cols-3 gap-3 mt-4">
-              {[{ v: "online", i: CreditCard, t: "Pay online", d: "Card via secure Stripe checkout" },
+              {[{ v: "online", i: CreditCard, t: "Pay online", d: "Card, GCash or Maya via secure PayMongo" },
                 { v: "gcash", i: Wallet, t: "GCash", d: "Scan QR or send to the seller's GCash" },
                 { v: "cod", i: Banknote, t: fulfillment === "pickup" ? "Pay on pickup" : "Cash on delivery", d: fulfillment === "pickup" ? "Pay the seller on pickup" : "Pay the rider on arrival" }].map((m) => (
                 <button key={m.v} data-testid={`pay-${m.v}`} onClick={() => setMethod(m.v)}

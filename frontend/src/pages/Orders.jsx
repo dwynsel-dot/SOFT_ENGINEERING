@@ -8,13 +8,14 @@ import { etaFrom, matchCoords } from "@/lib/laguna";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import StarRating from "@/components/StarRating";
-import { Package, MapPin, Phone, Bike, ChevronDown, Store, X, Wallet, Clock, Star } from "lucide-react";
+import { Package, MapPin, Phone, Bike, ChevronDown, Store, X, Wallet, Clock, Star, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 const FALLBACK = "https://images.unsplash.com/photo-1687199129802-3e4cc27baac0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxmcmVzaCUyMHZlZ2V0YWJsZXMlMjBtYXJrZXQlMjBzdGFsbHxlbnwwfHx8fDE3ODU1NTQzMDd8MA&ixlib=rb-4.1.0&q=85";
 const STATUS_LABEL = { pending: "Pending", confirmed: "Confirmed", packed: "Packed", rider_assigned: "Rider Assigned", out_for_delivery: "Out for Delivery", delivered: "Delivered", ready_for_pickup: "Ready for Pickup", picked_up: "Picked Up", cancelled: "Cancelled" };
+const PAY_LABEL = { pending: "Pending", paid: "Paid", cod_pending: "Cash on delivery", gcash_pending: "GCash pending", gcash_submitted: "GCash submitted", refunded: "Refunded" };
 
 export default function Orders() {
   const { user } = useAuth();
@@ -24,6 +25,8 @@ export default function Orders() {
   const [reviewFor, setReviewFor] = useState(null);
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
+  const [cancelFor, setCancelFor] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = () => api.get("/orders").then((r) => setOrders(r.data)).finally(() => setLoading(false));
   useEffect(() => { if (user) load(); }, [user]);
@@ -52,12 +55,23 @@ export default function Orders() {
   }, [open]);
 
   const cancel = async (id) => {
-    try { await api.put(`/orders/${id}/cancel`); toast.success("Order cancelled & stock restored"); load(); }
+    setCancelling(true);
+    try {
+      const { data } = await api.put(`/orders/${id}/cancel`);
+      if (data.payment_status === "refunded") {
+        toast.success("Order cancelled — refund submitted to your original payment method");
+      } else {
+        toast.success("Order cancelled & stock restored");
+      }
+      setCancelFor(null);
+      load();
+    }
     catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Cannot cancel"); }
+    finally { setCancelling(false); }
   };
 
   const isAdmin = user?.role === "admin";
-  const canCancel = (o) => !isAdmin && o.payment_status !== "paid" && !["delivered", "picked_up", "cancelled"].includes(o.status);
+  const canCancel = (o) => !isAdmin && !["delivered", "picked_up", "cancelled", "out_for_delivery"].includes(o.status) && o.payment_status !== "refunded";
 
   if (!user) return <div className="max-w-3xl mx-auto px-4 py-24 text-center"><p className="text-muted-foreground">Please <Link to="/login" className="text-primary font-semibold">sign in</Link> to view orders.</p></div>;
   if (loading) return <div className="max-w-3xl mx-auto px-4 py-24 text-center text-muted-foreground">Loading orders…</div>;
@@ -130,19 +144,22 @@ export default function Orders() {
                       ? <div className="flex items-start gap-2"><Store size={15} className="mt-0.5 text-primary" /><span>{o.pickup_location || "Farm pickup"}</span></div>
                       : <div className="flex items-start gap-2"><MapPin size={15} className="mt-0.5 text-primary" /><span>{o.delivery_address}</span></div>}
                     <div className="flex items-center gap-2"><Phone size={15} className="text-primary" /><span>{o.contact_phone}</span></div>
-                    <div className="flex items-center gap-2"><span className="text-muted-foreground">Payment:</span><span className="font-medium">{o.payment_method === "cod" ? "Cash" : o.payment_method === "gcash" ? "GCash" : "Online"} · {o.payment_status}</span></div>
+                    <div className="flex items-center gap-2"><span className="text-muted-foreground">Payment:</span><span className="font-medium">{o.payment_method === "cod" ? "Cash" : o.payment_method === "gcash" ? "GCash" : "Online"} · {PAY_LABEL[o.payment_status] || o.payment_status}</span></div>
                     {o.rider && <div className="flex items-center gap-2"><Bike size={15} className="text-primary" /><span>{o.rider.name}{o.rider.vehicle && o.rider.vehicle !== "—" ? ` · ${o.rider.vehicle}` : ""}{o.rider.phone ? ` · ${o.rider.phone}` : ""}{o.rider.custom ? " (temporary)" : ""}</span></div>}
+                    {o.payment_status === "refunded" && (
+                      <div data-testid={`refund-note-${o.id}`} className="sm:col-span-2 flex items-center gap-2 text-primary font-medium"><RotateCcw size={15} /><span>Refund issued via {o.refund_provider || "gateway"}. It may take 3–7 business days to appear on your account.</span></div>
+                    )}
                   </div>
 
-                  {!isAdmin && o.payment_method === "gcash" && o.payment_status !== "paid" && (
+                  {!isAdmin && o.payment_method === "gcash" && o.gcash_mode !== "auto" && o.payment_status !== "paid" && o.payment_status !== "refunded" && (
                     <Link to={`/gcash-pay/${o.id}`} data-testid={`gcash-pay-link-${o.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-[#0079FF] hover:underline">
                       <Wallet size={15} /> {o.payment_status === "gcash_submitted" ? "View GCash payment (awaiting seller)" : "Complete GCash payment"}
                     </Link>
                   )}
 
                   {canCancel(o) && (
-                    <button data-testid={`cancel-order-${o.id}`} onClick={() => cancel(o.id)} className="inline-flex items-center gap-1.5 text-sm font-medium text-destructive hover:underline">
-                      <X size={15} /> Cancel order
+                    <button data-testid={`cancel-order-${o.id}`} onClick={() => setCancelFor(o)} className="inline-flex items-center gap-1.5 text-sm font-medium text-destructive hover:underline">
+                      <X size={15} /> Cancel order{o.payment_status === "paid" ? " & request refund" : ""}
                     </button>
                   )}
                 </div>
@@ -160,6 +177,29 @@ export default function Orders() {
             <div><Label className="text-sm text-muted-foreground">Comment (optional)</Label><Textarea data-testid="review-comment" value={comment} onChange={(e) => setComment(e.target.value)} className="mt-1.5" placeholder="Fresh and delicious!" /></div>
             <Button data-testid="submit-review-btn" onClick={submitReview} className="w-full rounded-full bg-accent hover:bg-accent/90 text-accent-foreground">Submit review</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!cancelFor} onOpenChange={(v) => !v && !cancelling && setCancelFor(null)}>
+        <DialogContent className="max-w-sm" data-testid="cancel-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Cancel this order?</DialogTitle>
+            <DialogDescription>
+              {cancelFor?.payment_status === "paid"
+                ? `You already paid ${cancelFor ? peso(cancelFor.total) : ""} via ${cancelFor?.payment_method === "gcash" ? "GCash" : "online payment"}. We'll cancel the order and issue a refund back to your original payment method. It may take 3–7 business days to appear.`
+                : "This will cancel the order and restore the seller's stock. You won't be charged."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setCancelFor(null)} disabled={cancelling} className="rounded-full">Keep order</Button>
+            <Button
+              data-testid="confirm-cancel-btn"
+              onClick={() => cancel(cancelFor.id)}
+              disabled={cancelling}
+              className="rounded-full bg-destructive hover:bg-destructive/90 text-destructive-foreground">
+              {cancelling ? "Working…" : cancelFor?.payment_status === "paid" ? "Cancel & refund" : "Cancel order"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

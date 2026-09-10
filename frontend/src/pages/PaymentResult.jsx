@@ -11,22 +11,29 @@ export default function PaymentResult({ cancel }) {
   const { clear } = useCart();
   const [state, setState] = useState(cancel ? "cancelled" : "checking");
   const sessionId = params.get("session_id");
+  const orderId = params.get("order_id");
+  const provider = params.get("provider");
 
   const poll = useCallback(async (attempt) => {
-    if (attempt > 6) { setState("timeout"); return; }
+    if (attempt > 8) { setState("timeout"); return; }
     try {
-      const { data } = await api.get(`/payments/status/${sessionId}`);
-      if (data.payment_status === "paid") { clear(); localStorage.removeItem("pending_order"); setState("success"); return; }
-      if (data.status === "expired") { setState("failed"); return; }
+      if (provider === "paymongo" && orderId) {
+        const { data } = await api.get(`/paymongo/status/${orderId}`);
+        if (data.payment_status === "paid") { clear(); localStorage.removeItem("pending_order"); setState("success"); return; }
+      } else if (sessionId) {
+        const { data } = await api.get(`/payments/status/${sessionId}`);
+        if (data.payment_status === "paid") { clear(); localStorage.removeItem("pending_order"); setState("success"); return; }
+        if (data.status === "expired") { setState("failed"); return; }
+      }
     } catch { /* retry */ }
     setTimeout(() => poll(attempt + 1), 2000);
-  }, [sessionId, clear]);
+  }, [sessionId, orderId, provider, clear]);
 
   useEffect(() => {
     if (cancel) return;
-    if (!sessionId) { setState("failed"); return; }
+    if (!sessionId && !orderId) { setState("failed"); return; }
     poll(0);
-  }, [cancel, sessionId, poll]);
+  }, [cancel, sessionId, orderId, poll]);
 
   const views = {
     checking: { icon: <Loader2 className="animate-spin text-primary" size={56} />, title: "Confirming payment…", desc: "Please wait while we verify your transaction." },

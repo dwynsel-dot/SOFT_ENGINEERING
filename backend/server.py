@@ -55,24 +55,49 @@ def order_email_html(title: str, body: str) -> str:
 <tr><td style="padding:16px 24px;background:#ebe8e0;color:#59685e;font-size:12px">Farm-fresh from Laguna's farmers.</td></tr>
 </table></td></tr></table>"""
 
-def create_paymongo_session(amount_centavos: int, order_id: str, origin_url: str) -> dict:
+def create_paymongo_session(amount_centavos: int, order_id: str, origin_url: str,
+                            payment_method_types: list | None = None,
+                            success_url: str | None = None,
+                            cancel_url: str | None = None) -> dict:
+    pmt = payment_method_types or ["gcash"]
     payload = {"data": {"attributes": {
         "line_items": [{"amount": amount_centavos, "currency": "PHP", "name": "FarmDirect Laguna order", "quantity": 1}],
-        "payment_method_types": ["gcash"],
-        "success_url": f"{origin_url}/gcash-pay/{order_id}",
-        "cancel_url": f"{origin_url}/gcash-pay/{order_id}",
+        "payment_method_types": pmt,
+        "success_url": success_url or f"{origin_url}/gcash-pay/{order_id}",
+        "cancel_url": cancel_url or f"{origin_url}/gcash-pay/{order_id}",
         "reference_number": order_id,
         "metadata": {"order_id": order_id},
         "show_line_items": True,
     }}}
-    r = requests.post("https://api.paymongo.com/v2/checkout_sessions",
+    r = requests.post("https://api.paymongo.com/v1/checkout_sessions",
                       auth=(PAYMONGO_SECRET_KEY, ""),
                       headers={"Content-Type": "application/json",
-                               "Idempotency-Key": hashlib.sha256(f"checkout:{order_id}".encode()).hexdigest()},
+                               "Idempotency-Key": hashlib.sha256(f"checkout:{order_id}:{','.join(pmt)}".encode()).hexdigest()},
                       json=payload, timeout=20)
     r.raise_for_status()
     body = r.json()["data"]
     return {"id": body["id"], "checkout_url": body["attributes"]["checkout_url"]}
+
+def paymongo_retrieve_session(session_id: str) -> dict:
+    r = requests.get(f"https://api.paymongo.com/v1/checkout_sessions/{session_id}",
+                     auth=(PAYMONGO_SECRET_KEY, ""), timeout=20)
+    r.raise_for_status()
+    return r.json().get("data", {})
+
+def paymongo_refund(payment_id: str, amount_centavos: int, order_id: str, reason: str = "requested_by_customer") -> dict:
+    payload = {"data": {"attributes": {
+        "amount": amount_centavos,
+        "payment_id": payment_id,
+        "reason": reason,
+        "notes": f"Refund for order {order_id[:8]}",
+    }}}
+    r = requests.post("https://api.paymongo.com/v1/refunds",
+                      auth=(PAYMONGO_SECRET_KEY, ""),
+                      headers={"Content-Type": "application/json",
+                               "Idempotency-Key": hashlib.sha256(f"refund:{order_id}:{payment_id}".encode()).hexdigest()},
+                      json=payload, timeout=25)
+    r.raise_for_status()
+    return r.json().get("data", {})
 
 def verify_paymongo_signature(raw: bytes, header: str) -> bool:
     if not header or not PAYMONGO_WEBHOOK_SECRET:
@@ -553,9 +578,10 @@ async def checkout(data: CheckoutInput, request: Request, user: dict = Depends(g
                 for i in items:
                     await db.products.update_one({"id": i["product_id"]}, {"$inc": {"stock": i["quantity"]}})
                 logger.error(f"paymongo error: {e}")
-                raise HTTPException(status_code=502, detail="Could not start GCash payment. Please try again.")
+                raise HTTPException(status_code=400, detail="Could not start GCash payment. Please try again.")
             order["payment_status"] = "gcash_pending"
             order["gcash_mode"] = "auto"
+            order["payment_provider"] = "paymongo"
             order["paymongo_session_id"] = session["id"]
             await db.orders.insert_one(dict(order))
             return {"order_id": order_id, "gcash_mode": "auto", "checkout_url": session["checkout_url"]}
@@ -572,7 +598,28 @@ async def checkout(data: CheckoutInput, request: Request, user: dict = Depends(g
         await db.orders.insert_one(dict(order))
         return {"order_id": order_id, "payment_method": "gcash", "gcash_mode": "manual"}
 
-    # online payment
+    # online payment — prefer PayMongo (card + gcash + paymaya); fallback to Stripe
+    if PAYMONGO_SECRET_KEY:
+        centavos = int(round(total * 100))
+        success_url = f"{data.origin_url}/payment/success?order_id={order_id}&provider=paymongo"
+        cancel_url = f"{data.origin_url}/payment/cancel?order_id={order_id}&provider=paymongo"
+        try:
+            session = create_paymongo_session(
+                centavos, order_id, data.origin_url,
+                payment_method_types=["card", "gcash", "paymaya"],
+                success_url=success_url, cancel_url=cancel_url,
+            )
+        except Exception as e:
+            for i in items:
+                await db.products.update_one({"id": i["product_id"]}, {"$inc": {"stock": i["quantity"]}})
+            logger.error(f"paymongo online error: {e}")
+            raise HTTPException(status_code=400, detail="Could not start online payment. Please try again.")
+        order["payment_provider"] = "paymongo"
+        order["paymongo_session_id"] = session["id"]
+        await db.orders.insert_one(dict(order))
+        return {"order_id": order_id, "payment_method": "online", "provider": "paymongo",
+                "checkout_url": session["checkout_url"]}
+
     host_url = str(request.base_url)
     webhook_url = f"{host_url}api/webhook/stripe"
     stripe_checkout = StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=webhook_url)
@@ -583,12 +630,13 @@ async def checkout(data: CheckoutInput, request: Request, user: dict = Depends(g
                                  metadata={"order_id": order_id, "user_id": str(user["_id"])})
     session = await stripe_checkout.create_checkout_session(req)
     order["session_id"] = session.session_id
+    order["payment_provider"] = "stripe"
     await db.orders.insert_one(dict(order))
     await db.payment_transactions.insert_one({
         "session_id": session.session_id, "order_id": order_id, "user_id": str(user["_id"]),
         "amount": float(total), "currency": "php", "status": "initiated",
         "payment_status": "pending", "created_at": now, "updated_at": now})
-    return {"order_id": order_id, "checkout_url": session.url, "session_id": session.session_id}
+    return {"order_id": order_id, "checkout_url": session.url, "session_id": session.session_id, "provider": "stripe"}
 
 @api_router.get("/payments/status/{session_id}")
 async def payment_status(session_id: str, request: Request):
@@ -658,11 +706,50 @@ async def paymongo_webhook(request: Request):
     if etype == "checkout_session.payment.paid":
         a = resource.get("attributes", {})
         oid = a.get("reference_number") or a.get("metadata", {}).get("order_id")
+        pay_id = None
+        for p in (a.get("payments") or []):
+            if (p.get("attributes") or {}).get("status") == "paid":
+                pay_id = p.get("id"); break
         if oid:
             now = datetime.now(timezone.utc).isoformat()
+            update = {"payment_status": "paid", "updated_at": now}
+            if pay_id:
+                update["paymongo_payment_id"] = pay_id
             await db.orders.update_one({"id": oid, "payment_status": {"$ne": "paid"}},
-                {"$set": {"payment_status": "paid", "updated_at": now}})
+                {"$set": update})
     return {"received": True}
+
+@api_router.get("/paymongo/status/{order_id}")
+async def paymongo_status(order_id: str, user: dict = Depends(get_current_user)):
+    o = await db.orders.find_one({"id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if str(user["_id"]) != o.get("buyer_id") and user.get("role") not in ("admin", "seller"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if o.get("payment_status") == "paid":
+        return {"order_id": order_id, "payment_status": "paid",
+                "paymongo_payment_id": o.get("paymongo_payment_id")}
+    sid = o.get("paymongo_session_id")
+    if not sid or not PAYMONGO_SECRET_KEY:
+        return {"order_id": order_id, "payment_status": o.get("payment_status", "pending")}
+    try:
+        sess = paymongo_retrieve_session(sid)
+    except Exception as e:
+        logger.error(f"paymongo retrieve err: {e}")
+        return {"order_id": order_id, "payment_status": o.get("payment_status", "pending")}
+    attrs = sess.get("attributes", {})
+    payments = attrs.get("payments") or []
+    paid_payment = next((p for p in payments if (p.get("attributes") or {}).get("status") == "paid"), None)
+    if paid_payment:
+        now = datetime.now(timezone.utc).isoformat()
+        await db.orders.update_one(
+            {"id": order_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {"payment_status": "paid",
+                      "paymongo_payment_id": paid_payment.get("id"),
+                      "updated_at": now}})
+        return {"order_id": order_id, "payment_status": "paid",
+                "paymongo_payment_id": paid_payment.get("id")}
+    return {"order_id": order_id, "payment_status": o.get("payment_status", "pending")}
 
 @api_router.get("/orders")
 async def my_orders(user: dict = Depends(get_current_user)):
@@ -813,6 +900,54 @@ async def rider_earnings(user: dict = Depends(require_rider)):
     active = len([o for o in orders if o.get("status") in ("rider_assigned", "out_for_delivery")])
     return {"completed": len(delivered), "active": active, "fees_earned": fees, "assigned": len(orders)}
 
+async def _issue_refund_for_order(o: dict) -> dict:
+    """Attempts to refund a paid order via its original gateway.
+    Returns dict with keys: ok, refund_id (or None), message, provider."""
+    method = o.get("payment_method")
+    if o.get("payment_status") != "paid" or method not in ("online", "gcash"):
+        return {"ok": False, "message": "Order is not eligible for refund", "provider": None}
+    provider = o.get("payment_provider") or ("paymongo" if o.get("paymongo_session_id") else "stripe")
+
+    # If we don't yet have the paymongo_payment_id, retrieve it from the session
+    pay_id = o.get("paymongo_payment_id")
+    if provider == "paymongo" and not pay_id and o.get("paymongo_session_id") and PAYMONGO_SECRET_KEY:
+        try:
+            sess = paymongo_retrieve_session(o["paymongo_session_id"])
+            for p in (sess.get("attributes", {}).get("payments") or []):
+                if (p.get("attributes") or {}).get("status") == "paid":
+                    pay_id = p.get("id"); break
+            if pay_id:
+                await db.orders.update_one({"id": o["id"]}, {"$set": {"paymongo_payment_id": pay_id}})
+        except Exception as e:
+            logger.error(f"paymongo retrieve for refund failed: {e}")
+
+    if provider == "paymongo":
+        if not PAYMONGO_SECRET_KEY:
+            return {"ok": False, "message": "PayMongo not configured on server", "provider": provider}
+        if not pay_id:
+            return {"ok": False, "message": "No PayMongo payment id on this order — cannot refund", "provider": provider}
+        centavos = int(round(float(o.get("total") or 0) * 100))
+        try:
+            refund = paymongo_refund(pay_id, centavos, o["id"])
+            return {"ok": True, "refund_id": refund.get("id"),
+                    "message": "Refund submitted via PayMongo",
+                    "provider": provider}
+        except requests.HTTPError as e:
+            body = ""
+            try:
+                body = e.response.text[:500]
+            except Exception:
+                pass
+            logger.error(f"paymongo refund http err: {e} body={body}")
+            return {"ok": False, "message": f"PayMongo refund failed: {body or str(e)}", "provider": provider}
+        except Exception as e:
+            logger.error(f"paymongo refund err: {e}")
+            return {"ok": False, "message": f"Refund failed: {e}", "provider": provider}
+
+    # Stripe refund path (legacy)
+    return {"ok": False, "message": "Stripe refunds not implemented in this build", "provider": provider}
+
+
 @api_router.put("/orders/{order_id}/cancel")
 async def cancel_order(order_id: str, user: dict = Depends(get_current_user)):
     o = await db.orders.find_one({"id": order_id})
@@ -823,15 +958,30 @@ async def cancel_order(order_id: str, user: dict = Depends(get_current_user)):
     is_seller = user.get("role") == "seller" and uid in o.get("seller_ids", [])
     if not (is_owner or is_seller):
         raise HTTPException(status_code=403, detail="Not allowed to cancel this order")
-    if o.get("payment_status") == "paid":
-        raise HTTPException(status_code=400, detail="Paid orders cannot be cancelled. Please request a refund instead.")
     if o.get("status") in ("delivered", "picked_up", "cancelled"):
         raise HTTPException(status_code=400, detail="This order can no longer be cancelled")
+    if o.get("status") in ("out_for_delivery",):
+        raise HTTPException(status_code=400, detail="Cannot cancel while the rider is out for delivery")
+
     now = datetime.now(timezone.utc).isoformat()
+    refund_info = None
+    # If paid via online/gcash → attempt refund
+    if o.get("payment_status") == "paid" and o.get("payment_method") in ("online", "gcash"):
+        refund_info = await _issue_refund_for_order(o)
+        if not refund_info.get("ok"):
+            # Use 409 (Conflict) instead of 502 — Cloudflare intercepts 5xx and replaces the body.
+            raise HTTPException(status_code=409, detail=refund_info.get("message") or "Refund failed")
+
     await restore_stock(o)
+    update = {"status": "cancelled", "updated_at": now}
+    history_entry = {"status": "cancelled", "at": now}
+    if refund_info and refund_info.get("ok"):
+        update["payment_status"] = "refunded"
+        update["refund_id"] = refund_info.get("refund_id")
+        update["refund_provider"] = refund_info.get("provider")
+        history_entry["note"] = f"Refund issued via {refund_info.get('provider')}"
     await db.orders.update_one({"id": order_id},
-        {"$set": {"status": "cancelled", "updated_at": now},
-         "$push": {"history": {"status": "cancelled", "at": now}}})
+        {"$set": update, "$push": {"history": history_entry}})
     return await db.orders.find_one({"id": order_id}, {"_id": 0})
 
 @api_router.put("/seller/gcash")
