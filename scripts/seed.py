@@ -13,6 +13,14 @@ seller_tok = reg("mang.kanor@laguna.ph", "farmer123", "Mang Kanor", "seller",
 reg("aling.nena@laguna.ph", "buyer123", "Aling Nena", "buyer",
     {"phone": "0917-200-3004", "address": "Brgy. Batong Malake, Los Baños, Laguna"})
 
+# Rider accounts (so live GPS sharing works — buyers can track them)
+reg("kuya.jun@laguna.ph", "rider123", "Kuya Jun Dela Cruz", "rider",
+    {"phone": "0917-555-1010", "address": "Calamba, Laguna", "vehicle": "Motorcycle"})
+reg("kuya.marvin@laguna.ph", "rider123", "Kuya Marvin Reyes", "rider",
+    {"phone": "0917-555-2020", "address": "Los Baños, Laguna", "vehicle": "Tricycle"})
+reg("ate.ella@laguna.ph", "rider123", "Ate Ella Santos", "rider",
+    {"phone": "0917-555-3030", "address": "Santa Cruz, Laguna", "vehicle": "Motorcycle"})
+
 H = {"Authorization": f"Bearer {seller_tok}"}
 IMG = {
   "veg": "https://images.pexels.com/photos/10697692/pexels-photo-10697692.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",

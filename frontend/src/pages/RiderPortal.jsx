@@ -33,9 +33,45 @@ export default function RiderPortal() {
     // eslint-disable-next-line
   }, [user, loading]);
 
+  const startLocationSharing = (onError) => {
+    if (!navigator.geolocation) { toast.error("Geolocation not supported on this device"); return false; }
+    if (watchRef.current) return true; // already sharing
+    watchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        // fire-and-forget for every currently-active delivery
+        const targets = orders.filter((o) => o.status === "out_for_delivery");
+        targets.forEach((o) => api.put(`/orders/${o.id}/rider-location`, { lat: latitude, lng: longitude }).catch(() => {}));
+      },
+      (err) => { if (onError) onError(err); else toast.error("Could not get your location — please allow location access"); },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+    setSharing(true);
+    return true;
+  };
+
+  const stopLocationSharing = () => {
+    if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current);
+    watchRef.current = null; setSharing(false);
+  };
+
   const setStatus = async (id, status) => {
     setBusy(true);
-    try { await api.put(`/orders/${id}/rider-status`, { status }); toast.success(`Marked ${STATUS_LABEL[status]}`); load(); }
+    try {
+      await api.put(`/orders/${id}/rider-status`, { status });
+      toast.success(`Marked ${STATUS_LABEL[status]}`);
+      // Auto-start GPS sharing the moment a delivery goes out
+      if (status === "out_for_delivery") {
+        const started = startLocationSharing(() => toast.error("Please allow location access so the buyer can track you"));
+        if (started) toast.success("Sharing your live GPS with the buyer");
+      }
+      // If the delivery just finished, and no other active deliveries remain, stop sharing
+      if (status === "delivered") {
+        const stillActive = orders.some((o) => o.id !== id && o.status === "out_for_delivery");
+        if (!stillActive) stopLocationSharing();
+      }
+      load();
+    }
     catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Failed"); }
     finally { setBusy(false); }
   };
@@ -44,21 +80,12 @@ export default function RiderPortal() {
 
   const toggleShare = () => {
     if (sharing) {
-      if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current);
-      watchRef.current = null; setSharing(false); toast("Stopped sharing location");
+      stopLocationSharing();
+      toast("Stopped sharing location");
       return;
     }
-    if (!navigator.geolocation) { toast.error("Geolocation not supported"); return; }
     if (active.length === 0) { toast.error("Start a delivery (Out for Delivery) first"); return; }
-    watchRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        active.forEach((o) => api.put(`/orders/${o.id}/rider-location`, { lat: latitude, lng: longitude }).catch(() => {}));
-      },
-      () => toast.error("Could not get your location"),
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-    );
-    setSharing(true); toast.success("Sharing live location with buyers");
+    if (startLocationSharing()) toast.success("Sharing live location with buyers");
   };
 
   if (loading || !user) return <div className="py-24 text-center text-muted-foreground">Loading…</div>;

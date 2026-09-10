@@ -102,7 +102,78 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Refund flow for paid online/GCash orders + switch online payment method to direct PayMongo (using user's sk_test_ key)."
+user_problem_statement: "Rider Live GPS: remove simulated fake sinusoidal animation on DeliveryMap; show real device GPS only. Also provide login credentials for pre-seeded rider accounts."
+
+backend:
+  - task: "Seed rider login accounts (Kuya Jun / Kuya Marvin / Ate Ella)"
+    implemented: true
+    working: true
+    file: "/app/scripts/seed.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Seed script now registers 3 rider accounts via /auth/register with role='rider'. Each auto-creates a corresponding db.riders profile linked by rider_user_id. Emails: kuya.jun@laguna.ph, kuya.marvin@laguna.ph, ate.ella@laguna.ph — password rider123. Verified accounts login via curl and role='rider'."
+        - working: true
+          agent: "testing"
+          comment: "PASSED - Comprehensive rider GPS chain testing completed. Test 1 (Rider login): All 3 riders logged in successfully with role='rider'. Test 2 (Rider profiles): All 3 rider profiles found in GET /api/riders with correct rider_user_id links (Kuya Jun: 6aa22e45b9dce7e728c492a3, Kuya Marvin: 6aa22e45b9dce7e728c492a5, Ate Ella: 6aa22e46b9dce7e728c492a7). Test 3 (E2E delivery + GPS chain): Complete flow verified - buyer created delivery order, seller assigned Kuya Jun, rider saw order in GET /api/rider/orders, rider updated location twice via PUT /api/orders/{id}/rider-location (14.18,121.20 → 14.175,121.235), buyer saw updated rider_location with correct lat/lng/timestamp. Test 4 (Authorization guard): Different rider (Kuya Marvin) correctly denied with 403 'Not your delivery'. Test 5 (Rider earnings): GET /api/rider/earnings returned correct shape {completed:0, active:1, fees_earned:0, assigned:1}. All 5/5 tests passed."
+
+  - task: "Refund flow via PUT /api/orders/{order_id}/cancel"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Verified in prior run — 8/8 tests pass including 409 JSON body on refund negative path."
+
+frontend:
+  - task: "Remove simulated route animation on DeliveryMap"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/components/DeliveryMap.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Deleted the requestAnimationFrame sinusoidal animation. When no live rider_location is present but status='out_for_delivery', a STATIC gray 'R' marker is placed at the rider's registered zone with popup 'Waiting for live GPS…'. When live rider_location arrives, a pulsing green marker is drawn at the live coord + solid polyline to the drop-off, and an overlay badge shows 'Live GPS · Xs ago' (turns amber 'stale' after 60s). The overlay badge has data-testid='gps-status-badge'."
+
+  - task: "Auto-start GPS sharing when rider clicks Start delivery"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/pages/RiderPortal.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Extracted startLocationSharing/stopLocationSharing helpers. setStatus(id, 'out_for_delivery') now auto-starts the geolocation watch; setStatus(id, 'delivered') stops sharing if no other active delivery remains. Existing manual 'Share live location' toggle still works."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.4"
+  test_sequence: 5
+  run_ui: true
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: "Live GPS iteration: (1) removed simulated animation, only real rider_location shown + waiting/pulsing/stale badge; (2) auto GPS sharing on Start delivery; (3) seeded rider accounts kuya.jun / kuya.marvin / ate.ella (all password rider123). Please verify backend: rider login works, PUT /api/orders/{id}/rider-location as rider accepts lat/lng + reflects in GET /api/orders/{id} rider_location. Frontend can be tested after."
+    - agent: "testing"
+      message: "BACKEND TESTING COMPLETE - ALL TESTS PASSED ✅. Verified rider GPS chain per review request. Test results: (1) Rider login: All 3 riders (kuya.jun@laguna.ph, kuya.marvin@laguna.ph, ate.ella@laguna.ph) logged in successfully with role='rider'. (2) Rider profiles: GET /api/riders returns all 3 rider profiles with correct rider_user_id links. (3) End-to-end delivery + GPS chain: Complete flow verified - buyer created delivery order with COD, seller advanced status (confirmed → packed → rider_assigned → out_for_delivery), assigned Kuya Jun as rider, rider saw order in GET /api/rider/orders, rider updated location twice via PUT /api/orders/{id}/rider-location (first: 14.18,121.20, second: 14.175,121.235), buyer verified updated rider_location in GET /api/orders/{id} with correct lat/lng/timestamp. (4) Authorization guard: Different rider (Kuya Marvin) correctly denied with 403 when attempting to update location on Kuya Jun's order. (5) Rider earnings: GET /api/rider/earnings returned correct shape with active=1. All 5/5 tests passed. Backend rider GPS chain is fully functional. Frontend testing can proceed. YOU MUST ASK USER BEFORE DOING FRONTEND TESTING"
 
 backend:
   - task: "PayMongo online payment (card + gcash + paymaya) via /api/checkout"
