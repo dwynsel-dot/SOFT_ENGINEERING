@@ -1062,19 +1062,17 @@ async def startup():
         await db.users.insert_one({"email": admin_email, "password_hash": hash_password(admin_pw),
                                    "name": "Laguna Admin", "role": "admin",
                                    "created_at": datetime.now(timezone.utc).isoformat()})
-    if await db.riders.count_documents({}) == 0:
-        riders = [
-            {"id": str(uuid.uuid4()), "name": "Jun Dela Cruz", "phone": "0917-555-1010", "vehicle": "Motorcycle", "zone": "Calamba", "lat": 14.2117, "lng": 121.1653},
-            {"id": str(uuid.uuid4()), "name": "Marvin Reyes", "phone": "0917-555-2020", "vehicle": "Tricycle", "zone": "Los Baños", "lat": 14.1699, "lng": 121.2415},
-            {"id": str(uuid.uuid4()), "name": "Ella Santos", "phone": "0917-555-3030", "vehicle": "Motorcycle", "zone": "Santa Cruz", "lat": 14.2813, "lng": 121.4162},
-            {"id": str(uuid.uuid4()), "name": "Boy Aquino", "phone": "0917-555-4040", "vehicle": "Multicab", "zone": "San Pablo", "lat": 14.0683, "lng": 121.3256},
-        ]
-        await db.riders.insert_many(riders)
-    else:
-        zone_coords = {"Calamba": (14.2117, 121.1653), "Los Baños": (14.1699, 121.2415),
-                       "Santa Cruz": (14.2813, 121.4162), "San Pablo": (14.0683, 121.3256)}
-        for zone, (lat, lng) in zone_coords.items():
-            await db.riders.update_one({"zone": zone, "lat": {"$exists": False}}, {"$set": {"lat": lat, "lng": lng}})
+    legacy_rider_emails = ["kuya.jun@laguna.ph", "kuya.marvin@laguna.ph", "ate.ella@laguna.ph"]
+    legacy_rider_users = await db.users.find(
+        {"email": {"$in": legacy_rider_emails}}, {"_id": 1}
+    ).to_list(len(legacy_rider_emails))
+    if legacy_rider_users:
+        legacy_user_ids = [str(user["_id"]) for user in legacy_rider_users]
+        await db.riders.delete_many({"rider_user_id": {"$in": legacy_user_ids}})
+        await db.users.delete_many({"_id": {"$in": [user["_id"] for user in legacy_rider_users]}})
+    await db.riders.delete_many({"rider_user_id": {"$exists": False}, "name": {"$in": [
+        "Jun Dela Cruz", "Marvin Reyes", "Ella Santos", "Boy Aquino"
+    ]}})
     try:
         init_storage()
     except Exception as e:
